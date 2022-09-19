@@ -5,6 +5,8 @@ Created on Sep 18, 2022
 '''
 from _struct import unpack, pack
 import abc
+import socket
+import ssl
 
 
 class BinaryInputStream(object):
@@ -53,6 +55,42 @@ class BinaryOutputStream(object):
         self.writePackedUInt64(size)
         if size > 0:
             self.write(data)
+
+class ServerConnection(BinaryInputStream, BinaryOutputStream):
+    def __init__(self, port):
+        self.__port = port
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain("tunnel.crt", "tunnel.key")
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+        sock.bind(("0.0.0.0", self.__port))
+        sock.listen()
+        conn, addr = sock.accept()
+        self.__sock = context.wrap_socket(conn, server_side=True)
+    def read(self, size):
+        data = bytes()
+        while len(data) < size:
+            data += self.__sock.recv(size - len(data))
+        return data
+    def write(self, data):
+        self.__sock.sendall(data)
+
+class ClientConnection(BinaryInputStream, BinaryOutputStream):
+    def __init__(self, host, port):
+        self.__host = host
+        self.__port = port
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+        self.__sock = context.wrap_socket(sock)
+        self.__sock.connect((self.__host, self.__port))
+    def read(self, size):
+        data = bytes()
+        while len(data) < size:
+            data += self.__sock.recv(size - len(data))
+        return data
+    def write(self, data):
+        self.__sock.sendall(data)
 
 if __name__ == '__main__':
     pass
