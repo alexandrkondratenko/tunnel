@@ -9,7 +9,7 @@ from argparse import ArgumentParser
 from enum import IntEnum, auto
 import socket
 import ssl
-from threading import Thread
+from threading import Thread, Lock
 import time
 
 
@@ -135,6 +135,107 @@ class KeepAlive(Thread):
             pass
         self.__connection.close()
 
+class TunnelConnection(Thread):
+    def __init__(self, connections, cid, sock):
+        Thread.__init__(self)
+        self.__connections = connections
+        self.__cid = cid
+        self.__sock = sock
+        self.__closed = False
+    def run(self):
+        while True:
+            try:
+                data = self.__sock.recv(1024*1024)
+                if not data:
+                    raise Exception("Socket closed")
+                stream = MemoryOutputStream()
+                stream.writePackedUInt64(Message.Data)
+                stream.writePackedUInt64(self.__cid)
+                stream.writePackedUInt64(len(data))
+                stream.write(data)
+                self.__connections.write(stream.data)
+            except:
+                break
+        if not self.__closed:
+            print(f"disconnect({self.__cid})")
+            stream = MemoryOutputStream()
+            stream.writePackedUInt64(Message.Close)
+            stream.writePackedUInt64(self.__cid)
+            self.__connections.write(stream.data)
+            self.__connections.remove(self.__cid)
+    def send(self, data):
+        self.__sock.sendall(data)
+    def close(self):
+        self.__closed = True
+        self.__sock.close()
+        self.join()
+
+class TunnelConnections(object):
+    def __init__(self, connection, server):
+        self.__connection = connection
+        self.__server = server
+        self.__connections = {}
+        self.__allocated = set()
+        self.__cids = []
+        self.__lock = Lock()
+    def allocate(self):
+        self.__lock.acquire()
+        if self.__server:
+            cid = 0
+            while cid in self.__allocated:
+                cid += 1
+            self.__allocated.add(cid)
+        else:
+            stream = MemoryOutputStream()
+            stream.writePackedUInt64(Message.Allocate)
+            self.__connection.write(stream.data)
+            while not len(self.__cids):
+                self.__lock.release()
+                time.sleep(0.1)
+                self.__lock.acquire()
+            cid = self.__cids.pop(0)
+        self.__lock.release()
+        return cid
+    def connect(self, cid, sock):
+        connection = TunnelConnection(self, cid, sock)
+        self.__connections[cid] = connection
+        connection.start()
+    def close(self, cid):
+        self.__connections[cid].close()
+    def remove(self, cid):
+        del self.__connections[cid]
+        if cid in self.__allocated:
+            self.__allocated.remove(cid)
+    def cid(self, cid):
+        self.__lock.acquire()
+        self.__cids.append(cid)
+        self.__lock.release()
+    def write(self, data):
+        self.__connection.write(data)
+    def send(self, cid, data):
+        self.__connections[cid].send(data)
+
+class TunnelPort(Thread):
+    def __init__(self, connections, port):
+        Thread.__init__(self)
+        self.__connections = connections
+        self.__port = port
+    def run(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("0.0.0.0", self.__port))
+        sock.listen()
+        print(f"listen({self.__port})")
+        while True:
+            conn, addr = sock.accept()
+            cid = self.__connections.allocate()
+            print(f"local connection {addr}")
+            stream = MemoryOutputStream()
+            stream.writePackedUInt64(Message.Connect)
+            stream.writePackedUInt64(cid)
+            stream.writePackedUInt64(self.__port)
+            self.__connections.write(stream.data)
+            self.__connections.connect(cid, conn)
+
 if __name__ == '__main__':
     parser = ArgumentParser(description="TLS bidirectional tunnel")
     subparsers = parser.add_subparsers(dest="command")
@@ -172,32 +273,47 @@ if __name__ == '__main__':
         print(f"remote version = \"{version}\"")
         if version != PROTOCOL_VERSION:
             raise Exception(f"Wrong version \"{version}\"")
+        connections = TunnelConnections(connection, args.command == "server")
         size = connection.readPackedUInt64()
         ports = []
         for _ in range(size):
             port = connection.readPackedUInt64()
-            ports.append(port)
+            tunnel = TunnelPort(connections, port)
+            ports.append(tunnel)
+            tunnel.start()
         keepalive = KeepAlive(connection, args.keepalive)
         keepalive.start()
         while True:
             msg = connection.readPackedUInt64()
             if msg == Message.Allocate:
-                print("allocate()")
+                stream = MemoryOutputStream()
+                cid = connections.allocate()
+                print(f"allocate --> {cid}")
+                stream.writePackedUInt64(Message.Cid)
+                stream.writePackedUInt64(cid)
+                connection.write(stream.data)
             elif msg == Message.Cid:
                 cid = connection.readPackedUInt64()
                 print(f"cid({cid})")
+                connections.cid(cid)
             elif msg == Message.Connect:
                 cid = connection.readPackedUInt64()
                 port = connection.readPackedUInt64()
                 print(f"connect({cid}, {port})")
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.connect((args.target, port))
+                connections.connect(cid, sock)
             elif msg == Message.Close:
                 cid = connection.readPackedUInt64()
                 print(f"close({cid})")
+                connections.close(cid)
+                connections.remove(cid)
             elif msg == Message.Data:
                 cid = connection.readPackedUInt64()
                 size = connection.readPackedUInt64()
                 data = connection.read(size)
                 print(f"data({cid}, {size})")
+                connections.send(cid, data)
             elif msg == Message.KeepAlive:
                 print("keepalive()")
             else:
