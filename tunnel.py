@@ -5,7 +5,7 @@ Created on Sep 18, 2022
 '''
 from _struct import unpack, pack
 import abc
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Action
 from enum import IntEnum, auto
 import socket
 import ssl
@@ -227,16 +227,17 @@ class TunnelConnections(object):
         self.__connections = {}
 
 class TunnelPort(Thread):
-    def __init__(self, connections, port):
+    def __init__(self, connections, port, mapped):
         Thread.__init__(self)
         self.__connections = connections
         self.__port = port
+        self.__mapped = mapped
         self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     def run(self):
         try:
-            self.__sock.bind(("0.0.0.0", self.__port))
+            self.__sock.bind(("0.0.0.0", self.__mapped))
             self.__sock.listen()
-            print(f"listen({self.__port})")
+            print(f"listen({self.__mapped}) --> {self.__port}")
             while True:
                 conn, addr = self.__sock.accept()
                 cid = self.__connections.allocate()
@@ -253,6 +254,28 @@ class TunnelPort(Thread):
         self.__sock.close()
         self.join()
 
+class MappingAction(Action):
+    def __init__(self, option_strings, dest, nargs=None, **kwargs):
+        Action.__init__(self, option_strings, dest, nargs, **kwargs)
+    def __call__(self, parser, namespace, values, option_string=None):
+        mapping = {}
+        ports = {}
+        for value in values:
+            pair = value.split(":")
+            if len(pair) != 2:
+                parser.error("Mapping must use colon as separator")
+            for item in pair:
+                if not item.isdigit():
+                    parser.error("Mapping must contain digits oly")
+            port, mapped = list(map(int, pair))
+            if port in mapping:
+                parser.error("Mapping port duplication")
+            if mapped in ports:
+                parser.error("Mapped port duplication")
+            mapping[port] = mapped
+            ports[mapped] = port
+        setattr(namespace, self.dest, mapping)
+
 if __name__ == '__main__':
     parser = ArgumentParser(description="TLS bidirectional tunnel")
     subparsers = parser.add_subparsers(dest="command")
@@ -262,6 +285,7 @@ if __name__ == '__main__':
     server.add_argument("--forward", help="ports to forward to a tunnel server", type=int, nargs='+', default=[])
     server.add_argument("--reconnect", help="time to reconnect, in seconds, default is 60", type=int, default=60)
     server.add_argument("--keepalive", help="period to send keepalive messages, in seconds, default is 60", type=int, default=60)
+    server.add_argument("--mapping", action=MappingAction, help="ports mapping to connect to", nargs='+', default={})
     client = subparsers.add_parser("client")
     client.add_argument("host", help="host of the server to connect to")
     client.add_argument("port", help="port of the server to connect to", type=int)
@@ -269,6 +293,7 @@ if __name__ == '__main__':
     client.add_argument("--forward", help="ports to forward to a tunnel client", type=int, nargs='+', default=[])
     client.add_argument("--reconnect", help="time to reconnect, in seconds, default is 60", type=int, default=60)
     client.add_argument("--keepalive", help="period to send keepalive messages, in seconds, default is 60", type=int, default=60)
+    client.add_argument("--mapping", action=MappingAction, help="ports mapping to connect to", nargs='+', default={})
     args = parser.parse_args()
     connections = None
     ports = None
@@ -299,7 +324,8 @@ if __name__ == '__main__':
             ports = []
             for _ in range(size):
                 port = connection.readPackedUInt64()
-                tunnel = TunnelPort(connections, port)
+                mapped = args.mapping[port] if port in args.mapping else port
+                tunnel = TunnelPort(connections, port, mapped)
                 ports.append(tunnel)
                 tunnel.start()
             keepalive = KeepAlive(connection, args.keepalive)
