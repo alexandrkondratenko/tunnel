@@ -214,27 +214,37 @@ class TunnelConnections(object):
         self.__connection.write(data)
     def send(self, cid, data):
         self.__connections[cid].send(data)
+    def closeall(self):
+        for connection in self.__connections.values():
+            connection.close()
+        self.__connections = {}
 
 class TunnelPort(Thread):
     def __init__(self, connections, port):
         Thread.__init__(self)
         self.__connections = connections
         self.__port = port
+        self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     def run(self):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind(("0.0.0.0", self.__port))
-        sock.listen()
-        print(f"listen({self.__port})")
-        while True:
-            conn, addr = sock.accept()
-            cid = self.__connections.allocate()
-            print(f"local connection {addr}")
-            stream = MemoryOutputStream()
-            stream.writePackedUInt64(Message.Connect)
-            stream.writePackedUInt64(cid)
-            stream.writePackedUInt64(self.__port)
-            self.__connections.write(stream.data)
-            self.__connections.connect(cid, conn)
+        try:
+            self.__sock.bind(("0.0.0.0", self.__port))
+            self.__sock.listen()
+            print(f"listen({self.__port})")
+            while True:
+                conn, addr = self.__sock.accept()
+                cid = self.__connections.allocate()
+                print(f"local connection {addr}")
+                stream = MemoryOutputStream()
+                stream.writePackedUInt64(Message.Connect)
+                stream.writePackedUInt64(cid)
+                stream.writePackedUInt64(self.__port)
+                self.__connections.write(stream.data)
+                self.__connections.connect(cid, conn)
+        except:
+            pass
+    def close(self):
+        self.__sock.close()
+        self.join()
 
 if __name__ == '__main__':
     parser = ArgumentParser(description="TLS bidirectional tunnel")
@@ -253,68 +263,84 @@ if __name__ == '__main__':
     client.add_argument("--reconnect", help="time to reconnect, in seconds, default is 60", type=int, default=60)
     client.add_argument("--keepalive", help="period to send keepalive messages, in seconds, default is 60", type=int, default=60)
     args = parser.parse_args()
+    connections = None
+    ports = None
+    keepalive = None
     while True:
-        print("TLS bidirectional tunnel")
-        print(f"local version = \"{PROTOCOL_VERSION}\"")
-        if args.command == "server":
-            print("server mode")
-            connection = ServerConnection(args.port)
-        else:
-            print("client mode")
-            connection = ClientConnection(args.host, args.port)
-        print("connected")
-        stream = MemoryOutputStream()
-        stream.writeString(PROTOCOL_VERSION)
-        stream.writePackedUInt64(len(args.forward))
-        for forward in args.forward:
-            stream.writePackedUInt64(forward)
-        connection.write(stream.data)
-        version = connection.readString()
-        print(f"remote version = \"{version}\"")
-        if version != PROTOCOL_VERSION:
-            raise Exception(f"Wrong version \"{version}\"")
-        connections = TunnelConnections(connection, args.command == "server")
-        size = connection.readPackedUInt64()
-        ports = []
-        for _ in range(size):
-            port = connection.readPackedUInt64()
-            tunnel = TunnelPort(connections, port)
-            ports.append(tunnel)
-            tunnel.start()
-        keepalive = KeepAlive(connection, args.keepalive)
-        keepalive.start()
-        while True:
-            msg = connection.readPackedUInt64()
-            if msg == Message.Allocate:
-                stream = MemoryOutputStream()
-                cid = connections.allocate()
-                print(f"allocate --> {cid}")
-                stream.writePackedUInt64(Message.Cid)
-                stream.writePackedUInt64(cid)
-                connection.write(stream.data)
-            elif msg == Message.Cid:
-                cid = connection.readPackedUInt64()
-                print(f"cid({cid})")
-                connections.cid(cid)
-            elif msg == Message.Connect:
-                cid = connection.readPackedUInt64()
-                port = connection.readPackedUInt64()
-                print(f"connect({cid}, {port})")
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.connect((args.target, port))
-                connections.connect(cid, sock)
-            elif msg == Message.Close:
-                cid = connection.readPackedUInt64()
-                print(f"close({cid})")
-                connections.close(cid)
-                connections.remove(cid)
-            elif msg == Message.Data:
-                cid = connection.readPackedUInt64()
-                size = connection.readPackedUInt64()
-                data = connection.read(size)
-                print(f"data({cid}, {size})")
-                connections.send(cid, data)
-            elif msg == Message.KeepAlive:
-                print("keepalive()")
+        try:
+            print("TLS bidirectional tunnel")
+            print(f"local version = \"{PROTOCOL_VERSION}\"")
+            if args.command == "server":
+                print("server mode")
+                connection = ServerConnection(args.port)
             else:
-                raise Exception(f"Unknown msg {msg}")
+                print("client mode")
+                connection = ClientConnection(args.host, args.port)
+            print("connected")
+            stream = MemoryOutputStream()
+            stream.writeString(PROTOCOL_VERSION)
+            stream.writePackedUInt64(len(args.forward))
+            for forward in args.forward:
+                stream.writePackedUInt64(forward)
+            connection.write(stream.data)
+            version = connection.readString()
+            print(f"remote version = \"{version}\"")
+            if version != PROTOCOL_VERSION:
+                raise Exception(f"Wrong version \"{version}\"")
+            connections = TunnelConnections(connection, args.command == "server")
+            size = connection.readPackedUInt64()
+            ports = []
+            for _ in range(size):
+                port = connection.readPackedUInt64()
+                tunnel = TunnelPort(connections, port)
+                ports.append(tunnel)
+                tunnel.start()
+            keepalive = KeepAlive(connection, args.keepalive)
+            keepalive.start()
+            while True:
+                msg = connection.readPackedUInt64()
+                if msg == Message.Allocate:
+                    stream = MemoryOutputStream()
+                    cid = connections.allocate()
+                    print(f"allocate --> {cid}")
+                    stream.writePackedUInt64(Message.Cid)
+                    stream.writePackedUInt64(cid)
+                    connection.write(stream.data)
+                elif msg == Message.Cid:
+                    cid = connection.readPackedUInt64()
+                    print(f"cid({cid})")
+                    connections.cid(cid)
+                elif msg == Message.Connect:
+                    cid = connection.readPackedUInt64()
+                    port = connection.readPackedUInt64()
+                    print(f"connect({cid}, {port})")
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.connect((args.target, port))
+                    connections.connect(cid, sock)
+                elif msg == Message.Close:
+                    cid = connection.readPackedUInt64()
+                    print(f"close({cid})")
+                    connections.close(cid)
+                    connections.remove(cid)
+                elif msg == Message.Data:
+                    cid = connection.readPackedUInt64()
+                    size = connection.readPackedUInt64()
+                    data = connection.read(size)
+                    print(f"data({cid}, {size})")
+                    connections.send(cid, data)
+                elif msg == Message.KeepAlive:
+                    print("keepalive()")
+                else:
+                    raise Exception(f"Unknown msg {msg}")
+        except:
+            if ports:
+                for port in ports:
+                    port.close()
+                ports = None
+            if connections:
+                connections.closeall()
+                connections = None
+            if keepalive:
+                keepalive.join()
+                keepalive = None
+            time.sleep(args.reconnect)
