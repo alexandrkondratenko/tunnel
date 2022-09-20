@@ -5,6 +5,7 @@ Created on Sep 18, 2022
 '''
 from _struct import unpack, pack
 import abc
+from argparse import ArgumentParser
 import socket
 import ssl
 
@@ -93,4 +94,17 @@ class ClientConnection(BinaryInputStream, BinaryOutputStream):
         self.__sock.sendall(data)
 
 if __name__ == '__main__':
-    pass
+    parser = ArgumentParser(description="TLS bidirectional tunnel")
+    subparsers = parser.add_subparsers(dest="command")
+    server = subparsers.add_parser("server")
+    server.add_argument("port", help="port to listen for a tunnel client", type=int)
+    server.add_argument("--target", help="host of the tunnel target, default is localhost", default="localhost")
+    server.add_argument("--forward", help="ports to forward to a tunnel server", type=int, nargs='+', default=[])
+    server.add_argument("--reconnect", help="time to reconnect, in seconds, default is 60", type=int, default=60)
+    client = subparsers.add_parser("client")
+    client.add_argument("host", help="host of the server to connect to")
+    client.add_argument("port", help="port of the server to connect to", type=int)
+    client.add_argument("--target", help="host of the tunnel target, default is localhost", default="localhost")
+    client.add_argument("--forward", help="ports to forward to a tunnel client", type=int, nargs='+', default=[])
+    client.add_argument("--reconnect", help="time to reconnect, in seconds, default is 60", type=int, default=60)
+    args = parser.parse_args()
