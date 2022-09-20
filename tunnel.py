@@ -9,6 +9,8 @@ from argparse import ArgumentParser
 from enum import IntEnum, auto
 import socket
 import ssl
+from threading import Thread
+import time
 
 
 class BinaryInputStream(object):
@@ -84,6 +86,8 @@ class ServerConnection(BinaryInputStream, BinaryOutputStream):
         return data
     def write(self, data):
         self.__sock.sendall(data)
+    def close(self):
+        self.__sock.close()
 
 class ClientConnection(BinaryInputStream, BinaryOutputStream):
     def __init__(self, host, port):
@@ -102,8 +106,10 @@ class ClientConnection(BinaryInputStream, BinaryOutputStream):
         return data
     def write(self, data):
         self.__sock.sendall(data)
+    def close(self):
+        self.__sock.close()
 
-PROTOCOL_VERSION = "2022.09.20-00.19.18"
+PROTOCOL_VERSION = "2022.09.20-07.12.47"
 
 class Message(IntEnum):
     Allocate = auto()
@@ -111,6 +117,23 @@ class Message(IntEnum):
     Connect = auto()
     Close = auto()
     Data = auto()
+    KeepAlive = auto()
+
+class KeepAlive(Thread):
+    def __init__(self, connection, period):
+        Thread.__init__(self)
+        self.__connection = connection
+        self.__period = period
+        self.__stream = MemoryOutputStream()
+        self.__stream.writePackedUInt64(Message.KeepAlive)
+    def run(self):
+        try:
+            while True:
+                time.sleep(self.__period)
+                self.__connection.write(self.__stream.data)
+        except:
+            pass
+        self.__connection.close()
 
 if __name__ == '__main__':
     parser = ArgumentParser(description="TLS bidirectional tunnel")
@@ -120,12 +143,14 @@ if __name__ == '__main__':
     server.add_argument("--target", help="host of the tunnel target, default is localhost", default="localhost")
     server.add_argument("--forward", help="ports to forward to a tunnel server", type=int, nargs='+', default=[])
     server.add_argument("--reconnect", help="time to reconnect, in seconds, default is 60", type=int, default=60)
+    server.add_argument("--keepalive", help="period to send keepalive messages, in seconds, default is 60", type=int, default=60)
     client = subparsers.add_parser("client")
     client.add_argument("host", help="host of the server to connect to")
     client.add_argument("port", help="port of the server to connect to", type=int)
     client.add_argument("--target", help="host of the tunnel target, default is localhost", default="localhost")
     client.add_argument("--forward", help="ports to forward to a tunnel client", type=int, nargs='+', default=[])
     client.add_argument("--reconnect", help="time to reconnect, in seconds, default is 60", type=int, default=60)
+    client.add_argument("--keepalive", help="period to send keepalive messages, in seconds, default is 60", type=int, default=60)
     args = parser.parse_args()
     while True:
         print("TLS bidirectional tunnel")
@@ -152,6 +177,8 @@ if __name__ == '__main__':
         for _ in range(size):
             port = connection.readPackedUInt64()
             ports.append(port)
+        keepalive = KeepAlive(connection, args.keepalive)
+        keepalive.start()
         while True:
             msg = connection.readPackedUInt64()
             if msg == Message.Allocate:
@@ -171,5 +198,7 @@ if __name__ == '__main__':
                 size = connection.readPackedUInt64()
                 data = connection.read(size)
                 print(f"data({cid}, {size})")
+            elif msg == Message.KeepAlive:
+                print("keepalive()")
             else:
                 raise Exception(f"Unknown msg {msg}")
