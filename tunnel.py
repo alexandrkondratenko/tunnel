@@ -6,6 +6,7 @@ Created on Sep 18, 2022
 from _struct import unpack, pack
 import abc
 from argparse import ArgumentParser
+from enum import IntEnum, auto
 import socket
 import ssl
 
@@ -104,6 +105,13 @@ class ClientConnection(BinaryInputStream, BinaryOutputStream):
 
 PROTOCOL_VERSION = "2022.09.20-00.19.18"
 
+class Message(IntEnum):
+    Allocate = auto()
+    Cid = auto()
+    Connect = auto()
+    Close = auto()
+    Data = auto()
+
 if __name__ == '__main__':
     parser = ArgumentParser(description="TLS bidirectional tunnel")
     subparsers = parser.add_subparsers(dest="command")
@@ -138,3 +146,20 @@ if __name__ == '__main__':
         for _ in range(size):
             port = connection.readPackedUInt64()
             ports.append(port)
+        while True:
+            msg = connection.readPackedUInt64()
+            if msg == Message.Allocate:
+                pass
+            elif msg == Message.Cid:
+                cid = connection.readPackedUInt64()
+            elif msg == Message.Connect:
+                cid = connection.readPackedUInt64()
+                port = connection.readPackedUInt64()
+            elif msg == Message.Close:
+                cid = connection.readPackedUInt64()
+            elif msg == Message.Data:
+                cid = connection.readPackedUInt64()
+                size = connection.readPackedUInt64()
+                data = connection.read(size)
+            else:
+                raise Exception(f"Unknown msg {msg}")
