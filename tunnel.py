@@ -70,10 +70,10 @@ class MemoryOutputStream(BinaryOutputStream):
         return self.__data
 
 class ServerConnection(BinaryInputStream, BinaryOutputStream):
-    def __init__(self, port):
+    def __init__(self, port, cert, key):
         self.__port = port
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain("tunnel.crt", "tunnel.key")
+        context.load_cert_chain(cert, key)
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
         sock.bind(("0.0.0.0", self.__port))
         sock.listen()
@@ -93,13 +93,13 @@ class ServerConnection(BinaryInputStream, BinaryOutputStream):
         self.__sock.close()
 
 class ClientConnection(BinaryInputStream, BinaryOutputStream):
-    def __init__(self, host, port):
+    def __init__(self, host, port, cert):
         self.__host = host
         self.__port = port
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         context.check_hostname = False
         context.verify_mode = ssl.CERT_REQUIRED
-        context.load_verify_locations("tunnel.crt")
+        context.load_verify_locations(cert)
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
         self.__sock = context.wrap_socket(sock)
         self.__sock.connect((self.__host, self.__port))
@@ -286,6 +286,8 @@ if __name__ == '__main__':
     server.add_argument("--reconnect", help="time to reconnect, in seconds, default is 60", type=int, default=60)
     server.add_argument("--keepalive", help="period to send keepalive messages, in seconds, default is 60", type=int, default=60)
     server.add_argument("--mapping", action=MappingAction, help="ports mapping to connect to", nargs='+', default={})
+    server.add_argument("--cert", help="path to the certificate in PEM format, default is tunnel.crt", default="tunnel.crt")
+    server.add_argument("--key", help="path to the private key in PEM format, default is tunnel.key", default="tunnel.key")
     client = subparsers.add_parser("client")
     client.add_argument("host", help="host of the server to connect to")
     client.add_argument("port", help="port of the server to connect to", type=int)
@@ -294,6 +296,7 @@ if __name__ == '__main__':
     client.add_argument("--reconnect", help="time to reconnect, in seconds, default is 60", type=int, default=60)
     client.add_argument("--keepalive", help="period to send keepalive messages, in seconds, default is 60", type=int, default=60)
     client.add_argument("--mapping", action=MappingAction, help="ports mapping to connect to", nargs='+', default={})
+    client.add_argument("--cert", help="path to the certificate in PEM format, default is tunnel.crt", default="tunnel.crt")
     args = parser.parse_args()
     connections = None
     ports = None
@@ -304,10 +307,10 @@ if __name__ == '__main__':
             print(f"local version = \"{PROTOCOL_VERSION}\"")
             if args.command == "server":
                 print("server mode")
-                connection = ServerConnection(args.port)
+                connection = ServerConnection(args.port, args.cert, args.key)
             else:
                 print("client mode")
-                connection = ClientConnection(args.host, args.port)
+                connection = ClientConnection(args.host, args.port, args.cert)
             print("connected")
             stream = MemoryOutputStream()
             stream.writeString(PROTOCOL_VERSION)
