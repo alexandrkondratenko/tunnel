@@ -79,13 +79,16 @@ class ServerConnection(BinaryInputStream, BinaryOutputStream):
         sock.listen()
         conn, addr = sock.accept()
         self.__sock = context.wrap_socket(conn, server_side=True)
+        self.__lock = Lock()
     def read(self, size):
         data = bytes()
         while len(data) < size:
             data += self.__sock.recv(size - len(data))
         return data
     def write(self, data):
+        self.__lock.acquire()
         self.__sock.sendall(data)
+        self.__lock.release()
     def close(self):
         self.__sock.close()
 
@@ -99,13 +102,16 @@ class ClientConnection(BinaryInputStream, BinaryOutputStream):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
         self.__sock = context.wrap_socket(sock)
         self.__sock.connect((self.__host, self.__port))
+        self.__lock = Lock()
     def read(self, size):
         data = bytes()
         while len(data) < size:
             data += self.__sock.recv(size - len(data))
         return data
     def write(self, data):
+        self.__lock.acquire()
         self.__sock.sendall(data)
+        self.__lock.release()
     def close(self):
         self.__sock.close()
 
