@@ -36,7 +36,7 @@ class BinaryInputStream(object):
     def readString(self):
         size = self.readPackedUInt64()
         if size > 0:
-            return self.read(size).decode("utf-8")
+            return bytes(self.read(size)).decode("utf-8")
         return ""
 
 class BinaryOutputStream(object):
@@ -84,6 +84,7 @@ class MemoryOutputStream(BinaryOutputStream):
         self.__pos = 0
 
 class ServerConnection(BinaryInputStream, BinaryOutputStream):
+    __ALIGNMENT = 1024
     def __init__(self, port, cert, key):
         self.__port = port
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -94,11 +95,17 @@ class ServerConnection(BinaryInputStream, BinaryOutputStream):
         conn, addr = sock.accept()
         self.__sock = context.wrap_socket(conn, server_side=True)
         self.__lock = Lock()
+        self.__data = bytearray(ServerConnection.__ALIGNMENT)
+        self.__view = memoryview(self.__data)
     def read(self, size):
-        data = bytes()
-        while len(data) < size:
-            data += self.__sock.recv(size - len(data))
-        return data
+        if size > len(self.__data):
+            newSize = math.floor((size - 1)/ServerConnection.__ALIGNMENT + 1)*ServerConnection.__ALIGNMENT
+            self.__data = bytearray(newSize)
+            self.__view = memoryview(self.__data)
+        read = 0
+        while read < size:
+            read += self.__sock.recv_into(self.__view[read:], size - read)
+        return self.__view[:read]
     def write(self, data):
         self.__lock.acquire()
         self.__sock.sendall(data)
@@ -107,6 +114,7 @@ class ServerConnection(BinaryInputStream, BinaryOutputStream):
         self.__sock.close()
 
 class ClientConnection(BinaryInputStream, BinaryOutputStream):
+    __ALIGNMENT = 1024
     def __init__(self, host, port, cert):
         self.__host = host
         self.__port = port
@@ -118,11 +126,17 @@ class ClientConnection(BinaryInputStream, BinaryOutputStream):
         self.__sock = context.wrap_socket(sock)
         self.__sock.connect((self.__host, self.__port))
         self.__lock = Lock()
+        self.__data = bytearray(ClientConnection.__ALIGNMENT)
+        self.__view = memoryview(self.__data)
     def read(self, size):
-        data = bytes()
-        while len(data) < size:
-            data += self.__sock.recv(size - len(data))
-        return data
+        if size > len(self.__data):
+            newSize = math.floor((size - 1)/ClientConnection.__ALIGNMENT + 1)*ClientConnection.__ALIGNMENT
+            self.__data = bytearray(newSize)
+            self.__view = memoryview(self.__data)
+        read = 0
+        while read < size:
+            read += self.__sock.recv_into(self.__view[read:], size - read)
+        return self.__view[:read]
     def write(self, data):
         self.__lock.acquire()
         self.__sock.sendall(data)
@@ -165,15 +179,17 @@ class TunnelConnection(Thread):
         self.__closed = False
     def run(self):
         stream = MemoryOutputStream()
+        data = bytearray(1024*1024)
+        view = memoryview(data)
         while True:
             try:
-                data = self.__sock.recv(1024*1024)
-                if not data:
+                read = self.__sock.recv_into(view)
+                if not read:
                     raise Exception("Socket closed")
                 stream.writePackedUInt64(Message.Data)
                 stream.writePackedUInt64(self.__cid)
-                stream.writePackedUInt64(len(data))
-                stream.write(data)
+                stream.writePackedUInt64(read)
+                stream.write(view[:read])
                 self.__connections.write(stream.data)
                 stream.reset()
             except:
