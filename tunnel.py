@@ -348,6 +348,8 @@ if __name__ == '__main__':
                     port = connection.readPackedUInt64()
                     print(f"connect({cid}, {port})")
                     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    if port not in args.forward:
+                        raise Exception(f"Port {port} is not allowed to connect")
                     sock.connect((args.target, port))
                     connections.connect(cid, sock)
                 elif msg == Message.Close:
