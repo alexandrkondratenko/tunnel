@@ -128,10 +128,15 @@ if __name__ == '__main__':
     client.add_argument("--reconnect", help="time to reconnect, in seconds, default is 60", type=int, default=60)
     args = parser.parse_args()
     while True:
+        print("TLS bidirectional tunnel")
+        print(f"local version = \"{PROTOCOL_VERSION}\"")
         if args.command == "server":
+            print("server mode")
             connection = ServerConnection(args.port)
         else:
+            print("client mode")
             connection = ClientConnection(args.host, args.port)
+        print("connected")
         stream = MemoryOutputStream()
         stream.writeString(PROTOCOL_VERSION)
         stream.writePackedUInt64(len(args.forward))
@@ -139,6 +144,7 @@ if __name__ == '__main__':
             stream.writePackedUInt64(forward)
         connection.write(stream.data)
         version = connection.readString()
+        print(f"remote version = \"{version}\"")
         if version != PROTOCOL_VERSION:
             raise Exception(f"Wrong version \"{version}\"")
         size = connection.readPackedUInt64()
@@ -149,17 +155,21 @@ if __name__ == '__main__':
         while True:
             msg = connection.readPackedUInt64()
             if msg == Message.Allocate:
-                pass
+                print("allocate()")
             elif msg == Message.Cid:
                 cid = connection.readPackedUInt64()
+                print(f"cid({cid})")
             elif msg == Message.Connect:
                 cid = connection.readPackedUInt64()
                 port = connection.readPackedUInt64()
+                print(f"connect({cid}, {port})")
             elif msg == Message.Close:
                 cid = connection.readPackedUInt64()
+                print(f"close({cid})")
             elif msg == Message.Data:
                 cid = connection.readPackedUInt64()
                 size = connection.readPackedUInt64()
                 data = connection.read(size)
+                print(f"data({cid}, {size})")
             else:
                 raise Exception(f"Unknown msg {msg}")
