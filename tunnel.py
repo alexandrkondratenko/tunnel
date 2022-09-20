@@ -57,6 +57,15 @@ class BinaryOutputStream(object):
         if size > 0:
             self.write(data)
 
+class MemoryOutputStream(BinaryOutputStream):
+    def __init__(self):
+        self.__data = bytes()
+    def write(self, data):
+        self.__data += data
+    @property
+    def data(self):
+        return self.__data
+
 class ServerConnection(BinaryInputStream, BinaryOutputStream):
     def __init__(self, port):
         self.__port = port
