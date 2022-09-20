@@ -102,6 +102,8 @@ class ClientConnection(BinaryInputStream, BinaryOutputStream):
     def write(self, data):
         self.__sock.sendall(data)
 
+PROTOCOL_VERSION = "2022.09.20-00.19.18"
+
 if __name__ == '__main__':
     parser = ArgumentParser(description="TLS bidirectional tunnel")
     subparsers = parser.add_subparsers(dest="command")
@@ -117,3 +119,22 @@ if __name__ == '__main__':
     client.add_argument("--forward", help="ports to forward to a tunnel client", type=int, nargs='+', default=[])
     client.add_argument("--reconnect", help="time to reconnect, in seconds, default is 60", type=int, default=60)
     args = parser.parse_args()
+    while True:
+        if args.command == "server":
+            connection = ServerConnection(args.port)
+        else:
+            connection = ClientConnection(args.host, args.port)
+        stream = MemoryOutputStream()
+        stream.writeString(PROTOCOL_VERSION)
+        stream.writePackedUInt64(len(args.forward))
+        for forward in args.forward:
+            stream.writePackedUInt64(forward)
+        connection.write(stream.data)
+        version = connection.readString()
+        if version != PROTOCOL_VERSION:
+            raise Exception(f"Wrong version \"{version}\"")
+        size = connection.readPackedUInt64()
+        ports = []
+        for _ in range(size):
+            port = connection.readPackedUInt64()
+            ports.append(port)
