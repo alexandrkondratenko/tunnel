@@ -98,7 +98,8 @@ class ClientConnection(BinaryInputStream, BinaryOutputStream):
         self.__port = port
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
+        context.verify_mode = ssl.CERT_REQUIRED
+        context.load_verify_locations("tunnel.crt")
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
         self.__sock = context.wrap_socket(sock)
         self.__sock.connect((self.__host, self.__port))
