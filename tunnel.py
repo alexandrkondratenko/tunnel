@@ -7,6 +7,7 @@ from _struct import unpack, pack
 import abc
 from argparse import ArgumentParser, Action
 from enum import IntEnum, auto
+import math
 import socket
 import ssl
 from threading import Thread, Lock
@@ -61,13 +62,26 @@ class BinaryOutputStream(object):
             self.write(data)
 
 class MemoryOutputStream(BinaryOutputStream):
+    __ALIGNMENT = 1024
     def __init__(self):
-        self.__data = bytes()
+        self.__data = bytearray(MemoryOutputStream.__ALIGNMENT)
+        self.__view = memoryview(self.__data)
+        self.__pos = 0
     def write(self, data):
-        self.__data += data
+        size = len(data)
+        if self.__pos + size > len(self.__data):
+            newSize = math.floor((self.__pos + size - 1)/MemoryOutputStream.__ALIGNMENT + 1)*MemoryOutputStream.__ALIGNMENT
+            view = self.__view
+            self.__data = bytearray(newSize)
+            self.__view = memoryview(self.__data)
+            self.__view[:self.__pos] = view[:self.__pos]
+        self.__view[self.__pos:self.__pos + size] = data
+        self.__pos += size
     @property
     def data(self):
-        return self.__data
+        return self.__view[:self.__pos]
+    def reset(self):
+        self.__pos = 0
 
 class ServerConnection(BinaryInputStream, BinaryOutputStream):
     def __init__(self, port, cert, key):
@@ -150,25 +164,26 @@ class TunnelConnection(Thread):
         self.__sock = sock
         self.__closed = False
     def run(self):
+        stream = MemoryOutputStream()
         while True:
             try:
                 data = self.__sock.recv(1024*1024)
                 if not data:
                     raise Exception("Socket closed")
-                stream = MemoryOutputStream()
                 stream.writePackedUInt64(Message.Data)
                 stream.writePackedUInt64(self.__cid)
                 stream.writePackedUInt64(len(data))
                 stream.write(data)
                 self.__connections.write(stream.data)
+                stream.reset()
             except:
                 break
         if not self.__closed:
             print(f"disconnect({self.__cid})")
-            stream = MemoryOutputStream()
             stream.writePackedUInt64(Message.Close)
             stream.writePackedUInt64(self.__cid)
             self.__connections.write(stream.data)
+            stream.reset()
             self.__connections.remove(self.__cid)
     def send(self, data):
         self.__sock.sendall(data)
@@ -185,6 +200,7 @@ class TunnelConnections(object):
         self.__allocated = set()
         self.__cids = []
         self.__lock = Lock()
+        self.__stream = MemoryOutputStream()
     def allocate(self):
         self.__lock.acquire()
         if self.__server:
@@ -193,9 +209,9 @@ class TunnelConnections(object):
                 cid += 1
             self.__allocated.add(cid)
         else:
-            stream = MemoryOutputStream()
-            stream.writePackedUInt64(Message.Allocate)
-            self.__connection.write(stream.data)
+            self.__stream.writePackedUInt64(Message.Allocate)
+            self.__connection.write(self.__stream.data)
+            self.__stream.reset()
             while not len(self.__cids):
                 self.__lock.release()
                 time.sleep(0.1)
@@ -238,15 +254,16 @@ class TunnelPort(Thread):
             self.__sock.bind(("0.0.0.0", self.__mapped))
             self.__sock.listen()
             print(f"listen({self.__mapped}) --> {self.__port}")
+            stream = MemoryOutputStream()
             while True:
                 conn, addr = self.__sock.accept()
                 cid = self.__connections.allocate()
                 print(f"local connection {addr}")
-                stream = MemoryOutputStream()
                 stream.writePackedUInt64(Message.Connect)
                 stream.writePackedUInt64(cid)
                 stream.writePackedUInt64(self.__port)
                 self.__connections.write(stream.data)
+                stream.reset()
                 self.__connections.connect(cid, conn)
         except:
             pass
@@ -318,6 +335,7 @@ if __name__ == '__main__':
             for forward in args.forward:
                 stream.writePackedUInt64(forward)
             connection.write(stream.data)
+            stream.reset()
             version = connection.readString()
             print(f"remote version = \"{version}\"")
             if version != PROTOCOL_VERSION:
@@ -336,12 +354,12 @@ if __name__ == '__main__':
             while True:
                 msg = connection.readPackedUInt64()
                 if msg == Message.Allocate:
-                    stream = MemoryOutputStream()
                     cid = connections.allocate()
                     print(f"allocate --> {cid}")
                     stream.writePackedUInt64(Message.Cid)
                     stream.writePackedUInt64(cid)
                     connection.write(stream.data)
+                    stream.reset()
                 elif msg == Message.Cid:
                     cid = connection.readPackedUInt64()
                     print(f"cid({cid})")
