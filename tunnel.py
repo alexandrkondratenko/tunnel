@@ -169,6 +169,9 @@ class KeepAlive(Thread):
         except:
             pass
         self.__connection.close()
+    def close(self):
+        self.__connection.close()
+        self.join()
 
 class TunnelConnection(Thread):
     def __init__(self, connections, cid, sock):
@@ -413,6 +416,6 @@ if __name__ == '__main__':
                 connections.closeall()
                 connections = None
             if keepalive:
-                keepalive.join()
+                keepalive.close()
                 keepalive = None
             time.sleep(args.reconnect)
