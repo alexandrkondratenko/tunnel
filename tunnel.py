@@ -268,16 +268,25 @@ class TunnelConnections(object):
         return cid
     def connect(self, cid, sock):
         connection = TunnelConnection(self, cid, sock)
+        self.__lock.acquire()
         self.__connections[cid] = connection
+        self.__lock.release()
         connection.start()
     def close(self, cid):
+        connection = None
+        self.__lock.acquire()
         if cid in self.__connections:
-            self.__connections[cid].close()
+            connection = self.__connections[cid]
+        self.__lock.release()
+        if connection:
+            connection.close()
     def remove(self, cid):
+        self.__lock.acquire()
         if cid in self.__connections:
             del self.__connections[cid]
         if self.__server:
             self.__allocated[cid].deactivate()
+        self.__lock.release()
     def cid(self, cid):
         self.__lock.acquire()
         self.__cids.append(cid)
@@ -285,12 +294,20 @@ class TunnelConnections(object):
     def write(self, data):
         self.__connection.write(data)
     def send(self, cid, data):
+        connection = None
+        self.__lock.acquire()
         if cid in self.__connections:
-            self.__connections[cid].send(data)
+            connection = self.__connections[cid]
+        self.__lock.release()
+        if connection:
+            connection.send(data)
     def closeall(self):
-        for connection in self.__connections.values():
-            connection.close()
+        self.__lock.acquire()
+        connections = self.__connections
         self.__connections = {}
+        self.__lock.release()
+        for connection in connections.values():
+            connection.close()
 
 class TunnelPort(Thread):
     def __init__(self, connections, port, mapped):
