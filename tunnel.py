@@ -211,22 +211,50 @@ class TunnelConnection(Thread):
         self.__sock.close()
         self.join()
 
+class Cid(object):
+    __COOLDOWN_TIME = 60
+    def __init__(self, cid):
+        self.__cid = cid
+        self.__active = False
+        self.__time = time.time()
+    def cid(self):
+        return self.__cid
+    def activate(self):
+        self.__active = True
+        self.__time = time.time()
+    def deactivate(self):
+        self.__active = False
+        self.__time = time.time()
+    def ready(self):
+        if self.__active:
+            return False
+        if time.time() - self.__time < Cid.__COOLDOWN_TIME:
+            return False
+        return True
+
 class TunnelConnections(object):
     def __init__(self, connection, server):
         self.__connection = connection
         self.__server = server
         self.__connections = {}
-        self.__allocated = set()
+        self.__allocated = []
         self.__cids = []
         self.__lock = Lock()
         self.__stream = MemoryOutputStream()
+    def __ready(self):
+        for item in self.__allocated:
+            if item.ready():
+                return item
+        return None
     def allocate(self):
         self.__lock.acquire()
         if self.__server:
-            cid = 0
-            while cid in self.__allocated:
-                cid += 1
-            self.__allocated.add(cid)
+            ready = self.__ready()
+            if not ready:
+                ready = Cid(len(self.__allocated))
+                self.__allocated.append(ready)
+            ready.activate()
+            cid = ready.cid()
         else:
             self.__stream.writePackedUInt64(Message.Allocate)
             self.__connection.write(self.__stream.data)
@@ -243,11 +271,13 @@ class TunnelConnections(object):
         self.__connections[cid] = connection
         connection.start()
     def close(self, cid):
-        self.__connections[cid].close()
+        if cid in self.__connections:
+            self.__connections[cid].close()
     def remove(self, cid):
-        del self.__connections[cid]
-        if cid in self.__allocated:
-            self.__allocated.remove(cid)
+        if cid in self.__connections:
+            del self.__connections[cid]
+        if self.__server:
+            self.__allocated[cid].deactivate()
     def cid(self, cid):
         self.__lock.acquire()
         self.__cids.append(cid)
@@ -255,7 +285,8 @@ class TunnelConnections(object):
     def write(self, data):
         self.__connection.write(data)
     def send(self, cid, data):
-        self.__connections[cid].send(data)
+        if cid in self.__connections:
+            self.__connections[cid].send(data)
     def closeall(self):
         for connection in self.__connections.values():
             connection.close()
