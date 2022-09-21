@@ -88,9 +88,17 @@ class ServerConnection(BinaryInputStream, BinaryOutputStream):
     def __init__(self, port, cert, key):
         self.__port = port
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(cert, key)
+        try:
+            context.load_cert_chain(cert, key)
+        except:
+            print(f"Invalid or non-existent key or certificate file {cert} or {key}")
+            raise
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
-        sock.bind(("0.0.0.0", self.__port))
+        try:
+            sock.bind(("0.0.0.0", self.__port))
+        except:
+            print(f"Port {self.__port} already in use")
+            raise
         sock.listen()
         conn, addr = sock.accept()
         self.__sock = context.wrap_socket(conn, server_side=True)
@@ -121,7 +129,11 @@ class ClientConnection(BinaryInputStream, BinaryOutputStream):
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         context.check_hostname = False
         context.verify_mode = ssl.CERT_REQUIRED
-        context.load_verify_locations(cert)
+        try:
+            context.load_verify_locations(cert)
+        except:
+            print(f"Invalid or non-existent certificate file {cert}")
+            raise
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
         self.__sock = context.wrap_socket(sock)
         self.__sock.connect((self.__host, self.__port))
@@ -318,7 +330,11 @@ class TunnelPort(Thread):
         self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     def run(self):
         try:
-            self.__sock.bind(("0.0.0.0", self.__mapped))
+            try:
+                self.__sock.bind(("0.0.0.0", self.__mapped))
+            except:
+                print(f"Port {self.__mapped} already in use")
+                raise
             self.__sock.listen()
             print(f"listen({self.__mapped}) --> {self.__port}")
             stream = MemoryOutputStream()
