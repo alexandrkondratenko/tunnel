@@ -451,11 +451,20 @@ if __name__ == '__main__':
                     cid = connection.readPackedUInt64()
                     port = connection.readPackedUInt64()
                     print(f"connect({cid}, {port})")
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    if port not in args.forward:
-                        raise Exception(f"Port {port} is not allowed to connect")
-                    sock.connect((args.target, port))
-                    connections.connect(cid, sock)
+                    try:
+                        if port not in args.forward:
+                            print(f"Port {port} is not allowed to connect")
+                            raise Exception(f"Port {port} is not allowed to connect")
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.connect((args.target, port))
+                        connections.connect(cid, sock)
+                    except:
+                        print(f"abort({cid})")
+                        stream.writePackedUInt64(Message.Close)
+                        stream.writePackedUInt64(cid)
+                        connection.write(stream.data)
+                        stream.reset()
+                        connections.remove(cid)
                 elif msg == Message.Close:
                     cid = connection.readPackedUInt64()
                     print(f"close({cid})")
