@@ -177,18 +177,32 @@ class KeepAlive(Thread):
         Thread.__init__(self)
         self.__connection = connection
         self.__period = period
+        self.__lock = Lock()
+        self.__running = True
         self.__stream = MemoryOutputStream()
         self.__stream.writePackedUInt64(Message.KeepAlive)
+    def __isrunning(self):
+        self.__lock.acquire()
+        running = self.__running
+        self.__lock.release()
+        return running
     def run(self):
-        try:
-            while True:
-                time.sleep(self.__period)
-                self.__connection.write(self.__stream.data)
-        except:
-            pass
+        while self.__isrunning():
+            start = time.time()
+            while self.__isrunning() and time.time() - start < self.__period:
+                time.sleep(1)
+            if self.__isrunning():
+                try:
+                    self.__connection.write(self.__stream.data)
+                except:
+                    self.__lock.acquire()
+                    self.__running = False
+                    self.__lock.release()
         self.__connection.close()
     def close(self):
-        self.__connection.close()
+        self.__lock.acquire()
+        self.__running = False
+        self.__lock.release()
         self.join()
 
 class TunnelConnection(Thread):
