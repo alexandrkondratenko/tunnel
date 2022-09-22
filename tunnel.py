@@ -116,7 +116,10 @@ class ServerConnection(BinaryInputStream, BinaryOutputStream):
         return self.__view[:read]
     def write(self, data):
         self.__lock.acquire()
-        self.__sock.sendall(data)
+        try:
+            self.__sock.sendall(data)
+        except:
+            self.__sock.close()
         self.__lock.release()
     def close(self):
         self.__sock.close()
@@ -151,7 +154,10 @@ class ClientConnection(BinaryInputStream, BinaryOutputStream):
         return self.__view[:read]
     def write(self, data):
         self.__lock.acquire()
-        self.__sock.sendall(data)
+        try:
+            self.__sock.sendall(data)
+        except:
+            self.__sock.close()
         self.__lock.release()
     def close(self):
         self.__sock.close()
