@@ -220,6 +220,7 @@ class TunnelConnection(Thread):
         self.__sock.sendall(data)
     def close(self):
         self.__closed = True
+        self.__sock.shutdown(socket.SHUT_RDWR)
         self.__sock.close()
         self.join()
 
