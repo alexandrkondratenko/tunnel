@@ -390,7 +390,6 @@ if __name__ == '__main__':
     server.add_argument("port", help="port to listen for a tunnel client", type=int)
     server.add_argument("--target", help="host of the tunnel target, default is localhost", default="localhost")
     server.add_argument("--forward", help="ports to forward to a tunnel server", type=int, nargs='+', default=[])
-    server.add_argument("--reconnect", help="time to reconnect, in seconds, default is 60", type=int, default=60)
     server.add_argument("--keepalive", help="period to send keepalive messages, in seconds, default is 60", type=int, default=60)
     server.add_argument("--mapping", action=MappingAction, help="ports mapping to connect to", nargs='+', default={})
     server.add_argument("--cert", help="path to the certificate in PEM format, default is tunnel.crt", default="tunnel.crt")
@@ -498,4 +497,5 @@ if __name__ == '__main__':
             if keepalive:
                 keepalive.close()
                 keepalive = None
-            time.sleep(args.reconnect)
+            if args.command == "client":
+                time.sleep(args.reconnect)
