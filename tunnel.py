@@ -267,10 +267,14 @@ class TunnelConnections(object):
             cid = self.__cids.pop(0)
         self.__lock.release()
         return cid
-    def connect(self, cid, sock):
+    def create(self, cid, sock):
         connection = TunnelConnection(self, cid, sock)
         self.__lock.acquire()
         self.__connections[cid] = connection
+        self.__lock.release()
+    def start(self, cid):
+        self.__lock.acquire()
+        connection = self.__connections[cid]
         self.__lock.release()
         connection.start()
     def close(self, cid):
@@ -331,12 +335,13 @@ class TunnelPort(Thread):
                 conn, addr = self.__sock.accept()
                 cid = self.__connections.allocate()
                 print(f"local connection {addr}")
+                self.__connections.create(cid, conn)
                 stream.writePackedUInt64(Message.Connect)
                 stream.writePackedUInt64(cid)
                 stream.writePackedUInt64(self.__port)
                 self.__connections.write(stream.data)
                 stream.reset()
-                self.__connections.connect(cid, conn)
+                self.__connections.start(cid)
         except:
             pass
     def close(self):
@@ -453,7 +458,8 @@ if __name__ == '__main__':
                             raise Exception(f"Port {port} is not allowed to connect")
                         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                         sock.connect((args.target, port))
-                        connections.connect(cid, sock)
+                        connections.create(cid, sock)
+                        connections.start(cid)
                     except:
                         print(f"abort({cid})")
                         stream.writePackedUInt64(Message.Close)
