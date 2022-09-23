@@ -110,13 +110,7 @@ class StreamConnection(BinaryInputStream, BinaryOutputStream):
         self.__sock.close()
 
 class ServerConnection(StreamConnection):
-    def __init__(self, port, cert, key):
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        try:
-            context.load_cert_chain(cert, key)
-        except:
-            print(f"Invalid or non-existent key or certificate file {cert} or {key}")
-            raise
+    def __init__(self, context, port):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
         try:
             sock.bind(("0.0.0.0", port))
@@ -129,15 +123,7 @@ class ServerConnection(StreamConnection):
         StreamConnection.__init__(self, wrapped)
 
 class ClientConnection(StreamConnection):
-    def __init__(self, host, port, cert):
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_REQUIRED
-        try:
-            context.load_verify_locations(cert)
-        except:
-            print(f"Invalid or non-existent certificate file {cert}")
-            raise
+    def __init__(self, context, host, port):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
         wrapped = context.wrap_socket(sock)
         wrapped.connect((host, port))
@@ -399,6 +385,14 @@ if __name__ == '__main__':
     client.add_argument("--mapping", action=MappingAction, help="ports mapping to connect to", nargs='+', default={})
     client.add_argument("--cert", help="path to the certificate in PEM format, default is tunnel.crt", default="tunnel.crt")
     args = parser.parse_args()
+    if args.command == "server":
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(args.cert, args.key)
+    else:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_REQUIRED
+        context.load_verify_locations(args.cert)
     connections = None
     ports = None
     keepalive = None
@@ -408,10 +402,10 @@ if __name__ == '__main__':
             print(f"local version = \"{PROTOCOL_VERSION}\"")
             if args.command == "server":
                 print("server mode")
-                connection = ServerConnection(args.port, args.cert, args.key)
+                connection = ServerConnection(context, args.port)
             else:
                 print("client mode")
-                connection = ClientConnection(args.host, args.port, args.cert)
+                connection = ClientConnection(context, args.host, args.port)
             print("connected")
             stream = MemoryOutputStream()
             stream.writeString(PROTOCOL_VERSION)
