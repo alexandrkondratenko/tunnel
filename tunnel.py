@@ -110,12 +110,13 @@ class StreamConnection(BinaryInputStream, BinaryOutputStream):
         self.__sock.close()
 
 class ServerConnection(StreamConnection):
-    def __init__(self, context, port):
+    def __init__(self, context, port, reconnect):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
         try:
             sock.bind(("0.0.0.0", port))
         except:
             print(f"Port {port} already in use")
+            time.sleep(reconnect)
             raise
         sock.listen()
         conn, addr = sock.accept()
@@ -377,6 +378,7 @@ if __name__ == '__main__':
     server.add_argument("port", help="port to listen for a tunnel client", type=int)
     server.add_argument("--target", help="host of the tunnel target, default is localhost", default="localhost")
     server.add_argument("--forward", help="ports to forward to a tunnel server", type=int, nargs='+', default=[])
+    server.add_argument("--reconnect", help="time to retry bind port if used, in seconds, default is 60", type=int, default=60)
     server.add_argument("--keepalive", help="period to send keepalive messages, in seconds, default is 60", type=int, default=60)
     server.add_argument("--mapping", action=MappingAction, help="ports mapping to connect to", nargs='+', default={})
     server.add_argument("--cert", help="path to the certificate in PEM format, default is tunnel.crt", default="tunnel.crt")
@@ -408,7 +410,7 @@ if __name__ == '__main__':
             print(f"local version = \"{PROTOCOL_VERSION}\"")
             if args.command == "server":
                 print("server mode")
-                connection = ServerConnection(context, args.port)
+                connection = ServerConnection(context, args.port, args.reconnect)
             else:
                 print("client mode")
                 connection = ClientConnection(context, args.host, args.port)
