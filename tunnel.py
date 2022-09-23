@@ -173,6 +173,7 @@ class KeepAlive(Thread):
         self.join()
 
 class TunnelConnection(Thread):
+    __BUF_SIZE = 16*1024*1024
     def __init__(self, connections, cid, sock):
         Thread.__init__(self)
         self.__connections = connections
@@ -181,7 +182,7 @@ class TunnelConnection(Thread):
         self.__closed = False
     def run(self):
         stream = MemoryOutputStream()
-        data = bytearray(1024*1024)
+        data = bytearray(TunnelConnection.__BUF_SIZE)
         view = memoryview(data)
         while True:
             try:
