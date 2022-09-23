@@ -83,31 +83,16 @@ class MemoryOutputStream(BinaryOutputStream):
     def reset(self):
         self.__pos = 0
 
-class ServerConnection(BinaryInputStream, BinaryOutputStream):
+class StreamConnection(BinaryInputStream, BinaryOutputStream):
     __ALIGNMENT = 1024
-    def __init__(self, port, cert, key):
-        self.__port = port
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        try:
-            context.load_cert_chain(cert, key)
-        except:
-            print(f"Invalid or non-existent key or certificate file {cert} or {key}")
-            raise
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
-        try:
-            sock.bind(("0.0.0.0", self.__port))
-        except:
-            print(f"Port {self.__port} already in use")
-            raise
-        sock.listen()
-        conn, addr = sock.accept()
-        self.__sock = context.wrap_socket(conn, server_side=True)
+    def __init__(self, sock):
+        self.__sock = sock
         self.__lock = Lock()
-        self.__data = bytearray(ServerConnection.__ALIGNMENT)
+        self.__data = bytearray(StreamConnection.__ALIGNMENT)
         self.__view = memoryview(self.__data)
     def read(self, size):
         if size > len(self.__data):
-            newSize = math.floor((size - 1)/ServerConnection.__ALIGNMENT + 1)*ServerConnection.__ALIGNMENT
+            newSize = math.floor((size - 1)/StreamConnection.__ALIGNMENT + 1)*StreamConnection.__ALIGNMENT
             self.__data = bytearray(newSize)
             self.__view = memoryview(self.__data)
         read = 0
@@ -124,11 +109,27 @@ class ServerConnection(BinaryInputStream, BinaryOutputStream):
     def close(self):
         self.__sock.close()
 
-class ClientConnection(BinaryInputStream, BinaryOutputStream):
-    __ALIGNMENT = 1024
+class ServerConnection(StreamConnection):
+    def __init__(self, port, cert, key):
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        try:
+            context.load_cert_chain(cert, key)
+        except:
+            print(f"Invalid or non-existent key or certificate file {cert} or {key}")
+            raise
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+        try:
+            sock.bind(("0.0.0.0", port))
+        except:
+            print(f"Port {port} already in use")
+            raise
+        sock.listen()
+        conn, addr = sock.accept()
+        wrapped = context.wrap_socket(conn, server_side=True)
+        StreamConnection.__init__(self, wrapped)
+
+class ClientConnection(StreamConnection):
     def __init__(self, host, port, cert):
-        self.__host = host
-        self.__port = port
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         context.check_hostname = False
         context.verify_mode = ssl.CERT_REQUIRED
@@ -138,29 +139,9 @@ class ClientConnection(BinaryInputStream, BinaryOutputStream):
             print(f"Invalid or non-existent certificate file {cert}")
             raise
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
-        self.__sock = context.wrap_socket(sock)
-        self.__sock.connect((self.__host, self.__port))
-        self.__lock = Lock()
-        self.__data = bytearray(ClientConnection.__ALIGNMENT)
-        self.__view = memoryview(self.__data)
-    def read(self, size):
-        if size > len(self.__data):
-            newSize = math.floor((size - 1)/ClientConnection.__ALIGNMENT + 1)*ClientConnection.__ALIGNMENT
-            self.__data = bytearray(newSize)
-            self.__view = memoryview(self.__data)
-        read = 0
-        while read < size:
-            read += self.__sock.recv_into(self.__view[read:], size - read)
-        return self.__view[:read]
-    def write(self, data):
-        self.__lock.acquire()
-        try:
-            self.__sock.sendall(data)
-        except:
-            self.__sock.close()
-        self.__lock.release()
-    def close(self):
-        self.__sock.close()
+        wrapped = context.wrap_socket(sock)
+        wrapped.connect((host, port))
+        StreamConnection.__init__(self, wrapped)
 
 PROTOCOL_VERSION = "2022.09.20-07.12.47"
 
