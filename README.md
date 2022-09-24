@@ -6,6 +6,7 @@
 - For the client to work - only a certificate is required (to verify that the certificate has not been spoofed in the event of a man-in-the-middle attack).
 - A single connection is created that aggregates all connections through the forwarded ports.
 - Ports remapping is supported.
+- Protocol version based on the source file content.
 ### A typical use cases:
 #### Help:
 ```
