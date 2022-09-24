@@ -7,6 +7,7 @@ from _struct import unpack, pack
 import abc
 from argparse import ArgumentParser, Action
 from enum import IntEnum, auto
+import hashlib
 import math
 import socket
 import ssl
@@ -129,8 +130,6 @@ class ClientConnection(StreamConnection):
         wrapped = context.wrap_socket(sock)
         wrapped.connect((host, port))
         StreamConnection.__init__(self, wrapped)
-
-PROTOCOL_VERSION = "2022.09.20-07.12.47"
 
 class Message(IntEnum):
     Allocate = auto()
@@ -393,6 +392,7 @@ if __name__ == '__main__':
     client.add_argument("--mapping", action=MappingAction, help="ports mapping to connect to", nargs='+', default={})
     client.add_argument("--cert", help="path to the certificate in PEM format, default is tunnel.crt", default="tunnel.crt")
     args = parser.parse_args()
+    digest = hashlib.sha256(open(__file__).read().encode("utf-8")).digest()
     if args.command == "server":
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(args.cert, args.key)
@@ -407,7 +407,6 @@ if __name__ == '__main__':
     while True:
         try:
             print("TLS bidirectional tunnel")
-            print(f"local version = \"{PROTOCOL_VERSION}\"")
             if args.command == "server":
                 print("server mode")
                 connection = ServerConnection(context, args.port, args.reconnect)
@@ -416,16 +415,18 @@ if __name__ == '__main__':
                 connection = ClientConnection(context, args.host, args.port)
             print("connected")
             stream = MemoryOutputStream()
-            stream.writeString(PROTOCOL_VERSION)
+            stream.writePackedUInt64(len(digest))
+            stream.write(digest)
             stream.writePackedUInt64(len(args.forward))
             for forward in args.forward:
                 stream.writePackedUInt64(forward)
             connection.write(stream.data)
             stream.reset()
-            version = connection.readString()
-            print(f"remote version = \"{version}\"")
-            if version != PROTOCOL_VERSION:
-                raise Exception(f"Wrong version \"{version}\"")
+            size = connection.readPackedUInt64()
+            rdigest = connection.read(size)
+            if rdigest != digest:
+                print("Local and remote versions are different")
+                raise Exception("Local and remote versions are different")
             connections = TunnelConnections(connection, args.command == "server")
             size = connection.readPackedUInt64()
             ports = []
