@@ -100,9 +100,11 @@ class StreamConnection(BinaryInputStream, BinaryOutputStream):
         while read < size:
             read += self.__sock.recv_into(self.__view[read:], size - read)
         return self.__view[:read]
-    def write(self, data):
+    def write(self, data, description = None):
         self.__lock.acquire()
         try:
+            if description is not None:
+                print(description)
             self.__sock.sendall(data)
         except:
             self.__sock.close()
@@ -193,7 +195,7 @@ class TunnelConnection(Thread):
                 stream.writePackedUInt64(self.__cid)
                 stream.writePackedUInt64(read)
                 stream.write(view[:read])
-                self.__connections.write(stream.data)
+                self.__connections.write(stream.data, f"send({self.__cid}, {read})")
                 stream.reset()
             except:
                 break
@@ -296,8 +298,8 @@ class TunnelConnections(object):
         self.__lock.acquire()
         self.__cids.append(cid)
         self.__lock.release()
-    def write(self, data):
-        self.__connection.write(data)
+    def write(self, data, description = None):
+        self.__connection.write(data, description)
     def send(self, cid, data):
         connection = None
         self.__lock.acquire()
