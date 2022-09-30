@@ -481,7 +481,7 @@ if __name__ == '__main__':
                     cid = connection.readPackedUInt64()
                     size = connection.readPackedUInt64()
                     data = connection.read(size)
-                    print(f"data({cid}, {size})")
+                    print(f"recv({cid}, {size})")
                     connections.send(cid, data)
                 elif msg == Message.KeepAlive:
                     print("keepalive()")
