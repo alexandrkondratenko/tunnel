@@ -6,12 +6,14 @@ Created on Sep 18, 2022
 from _struct import unpack, pack
 import abc
 from argparse import ArgumentParser, Action
+import datetime
 from enum import IntEnum, auto
 import hashlib
 import math
 import socket
 import ssl
-from threading import Thread, Lock
+import sys
+from threading import Thread, Lock, Condition
 import time
 
 
@@ -84,6 +86,33 @@ class MemoryOutputStream(BinaryOutputStream):
     def reset(self):
         self.__pos = 0
 
+class Logger(Thread):
+    def __init__(self):
+        Thread.__init__(self)
+        self.__condition = Condition()
+        self.__entries = []
+    def log(self, message):
+        with self.__condition:
+            self.__entries.append((datetime.datetime.now(), message))
+            self.__condition.notify()
+    def run(self):
+        dirty = False
+        while True:
+            with self.__condition:
+                while len(self.__entries) == 0:
+                    if dirty:
+                        dirty = False
+                        sys.stdout.flush()
+                    self.__condition.wait()
+                entry = self.__entries.pop(0)
+            timestamp = entry[0].strftime("%Y-%m-%d %H:%M:%S.%f")
+            message = entry[1]
+            print(f"{timestamp}: {message}")
+            dirty = True
+
+logger = Logger()
+logger.start()
+
 class StreamConnection(BinaryInputStream, BinaryOutputStream):
     __ALIGNMENT = 1024
     def __init__(self, sock):
@@ -104,7 +133,7 @@ class StreamConnection(BinaryInputStream, BinaryOutputStream):
         self.__lock.acquire()
         try:
             if description is not None:
-                print(description)
+                logger.log(description)
             self.__sock.sendall(data)
         except:
             self.__sock.close()
@@ -118,7 +147,7 @@ class ServerConnection(StreamConnection):
         try:
             sock.bind(("0.0.0.0", port))
         except:
-            print(f"Port {port} already in use")
+            logger.log(f"Port {port} already in use")
             time.sleep(reconnect)
             raise
         sock.listen()
@@ -200,7 +229,7 @@ class TunnelConnection(Thread):
             except:
                 break
         if not self.__closed:
-            print(f"disconnect({self.__cid})")
+            logger.log(f"disconnect({self.__cid})")
             stream.writePackedUInt64(Message.Close)
             stream.writePackedUInt64(self.__cid)
             self.__connections.write(stream.data)
@@ -328,15 +357,15 @@ class TunnelPort(Thread):
             try:
                 self.__sock.bind(("0.0.0.0", self.__mapped))
             except:
-                print(f"Port {self.__mapped} already in use")
+                logger.log(f"Port {self.__mapped} already in use")
                 raise
             self.__sock.listen()
-            print(f"listen({self.__mapped}) --> {self.__port}")
+            logger.log(f"listen({self.__mapped}) --> {self.__port}")
             stream = MemoryOutputStream()
             while True:
                 conn, addr = self.__sock.accept()
                 cid = self.__connections.allocate()
-                print(f"local connection {addr}")
+                logger.log(f"local connection {addr}")
                 self.__connections.create(cid, conn)
                 stream.writePackedUInt64(Message.Connect)
                 stream.writePackedUInt64(cid)
@@ -408,14 +437,14 @@ if __name__ == '__main__':
     keepalive = None
     while True:
         try:
-            print("TLS bidirectional tunnel")
+            logger.log("TLS bidirectional tunnel")
             if args.command == "server":
-                print("server mode")
+                logger.log("server mode")
                 connection = ServerConnection(context, args.port, args.reconnect)
             else:
-                print("client mode")
+                logger.log("client mode")
                 connection = ClientConnection(context, args.host, args.port)
-            print("connected")
+            logger.log("connected")
             stream = MemoryOutputStream()
             stream.writePackedUInt64(len(digest))
             stream.write(digest)
@@ -427,7 +456,7 @@ if __name__ == '__main__':
             size = connection.readPackedUInt64()
             rdigest = connection.read(size)
             if rdigest != digest:
-                print("Local and remote versions are different")
+                logger.log("Local and remote versions are different")
                 raise Exception("Local and remote versions are different")
             connections = TunnelConnections(connection, args.command == "server")
             size = connection.readPackedUInt64()
@@ -444,29 +473,29 @@ if __name__ == '__main__':
                 msg = connection.readPackedUInt64()
                 if msg == Message.Allocate:
                     cid = connections.allocate()
-                    print(f"allocate --> {cid}")
+                    logger.log(f"allocate --> {cid}")
                     stream.writePackedUInt64(Message.Cid)
                     stream.writePackedUInt64(cid)
                     connection.write(stream.data)
                     stream.reset()
                 elif msg == Message.Cid:
                     cid = connection.readPackedUInt64()
-                    print(f"cid({cid})")
+                    logger.log(f"cid({cid})")
                     connections.cid(cid)
                 elif msg == Message.Connect:
                     cid = connection.readPackedUInt64()
                     port = connection.readPackedUInt64()
-                    print(f"connect({cid}, {port})")
+                    logger.log(f"connect({cid}, {port})")
                     try:
                         if port not in args.forward:
-                            print(f"Port {port} is not allowed to connect")
+                            logger.log(f"Port {port} is not allowed to connect")
                             raise Exception(f"Port {port} is not allowed to connect")
                         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                         sock.connect((args.target, port))
                         connections.create(cid, sock)
                         connections.start(cid)
                     except:
-                        print(f"abort({cid})")
+                        logger.log(f"abort({cid})")
                         stream.writePackedUInt64(Message.Close)
                         stream.writePackedUInt64(cid)
                         connection.write(stream.data)
@@ -474,17 +503,17 @@ if __name__ == '__main__':
                         connections.remove(cid)
                 elif msg == Message.Close:
                     cid = connection.readPackedUInt64()
-                    print(f"close({cid})")
+                    logger.log(f"close({cid})")
                     connections.close(cid)
                     connections.remove(cid)
                 elif msg == Message.Data:
                     cid = connection.readPackedUInt64()
                     size = connection.readPackedUInt64()
                     data = connection.read(size)
-                    print(f"recv({cid}, {size})")
+                    logger.log(f"recv({cid}, {size})")
                     connections.send(cid, data)
                 elif msg == Message.KeepAlive:
-                    print("keepalive()")
+                    logger.log("keepalive()")
                 else:
                     raise Exception(f"Unknown msg {msg}")
         except:
