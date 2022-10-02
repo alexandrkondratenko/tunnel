@@ -272,6 +272,7 @@ class TunnelConnections(object):
         self.__allocated = []
         self.__cids = []
         self.__lock = Lock()
+        self.__condition = Condition()
         self.__stream = MemoryOutputStream()
     def __ready(self):
         for item in self.__allocated:
@@ -291,11 +292,10 @@ class TunnelConnections(object):
             self.__stream.writePackedUInt64(Message.Allocate)
             self.__connection.write(self.__stream.data)
             self.__stream.reset()
-            while not len(self.__cids):
-                self.__lock.release()
-                time.sleep(0.1)
-                self.__lock.acquire()
-            cid = self.__cids.pop(0)
+            with self.__condition:
+                while len(self.__cids) == 0:
+                    self.__condition.wait()
+                cid = self.__cids.pop(0)
         self.__lock.release()
         return cid
     def create(self, cid, sock):
@@ -324,9 +324,9 @@ class TunnelConnections(object):
             self.__allocated[cid].deactivate()
         self.__lock.release()
     def cid(self, cid):
-        self.__lock.acquire()
-        self.__cids.append(cid)
-        self.__lock.release()
+        with self.__condition:
+            self.__cids.append(cid)
+            self.__condition.notify()
     def write(self, data, description = None):
         self.__connection.write(data, description)
     def send(self, cid, data):
